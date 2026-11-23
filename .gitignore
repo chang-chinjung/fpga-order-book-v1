@@ -1,0 +1,7 @@
+build/
+coverage.dat
+*.fst
+*.vcd
+obj_dir/
+__pycache__/
+*.pyc
