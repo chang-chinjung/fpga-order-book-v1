@@ -485,6 +485,182 @@ def generate_axis_random(
     )
 
 
+class MultiSymOrderBookModel:
+    """Multi-symbol golden model matching order_book_v1 (SYMBOLS=2, USE_AXIS=1)."""
+
+    def __init__(self, symbols: int = 2) -> None:
+        self.symbols = symbols
+        self.books = [OrderBookV1Model() for _ in range(symbols)]
+        self.seq_init = False
+        self.prev_seq = 0
+        self.stale = False
+        self.cnt_seq_gap = 0
+        self.cnt_dup_seq = 0
+        self.cnt_drop_stale = 0
+        self.cnt_mask = 0xFFFF
+
+    def _inc(self, attr: str) -> None:
+        setattr(self, attr, (getattr(self, attr) + 1) & self.cnt_mask)
+
+    def snapshot_empty(self) -> None:
+        for b in self.books:
+            b.orders.clear()
+            b.ladders = [{}, {}]
+        self.stale = False
+        self.seq_init = False
+
+    def step_seq(
+        self, sym: int, op: int, side: int, oid: int, level: int, qty: int, seq: int
+    ) -> None:
+        seq &= 0x7FFF  # 15-bit AXIS seq for SYMBOLS > 1 (bit[61:60] = sym)
+        if self.stale:
+            self._inc("cnt_drop_stale")
+            return
+        if self.seq_init:
+            if seq == self.prev_seq:
+                self._inc("cnt_dup_seq")
+                return
+            if seq != ((self.prev_seq + 1) & 0x7FFF):
+                self._inc("cnt_seq_gap")
+                self.stale = True
+                return
+        self.seq_init = True
+        self.prev_seq = seq
+        self.books[sym].step(op, side, oid, level, qty)
+
+    def counters(self) -> tuple[int, ...]:
+        tot = [0] * 9
+        for b in self.books:
+            for idx, v in enumerate(b.counters()):
+                tot[idx] = (tot[idx] + v) & self.cnt_mask
+        return tuple(tot)
+
+
+def generate_m2_random(
+    n_norm: int, n_gap: int, seed: int, out_dir: pathlib.Path
+) -> None:
+    hot_bids = [0, 1, 15, 16, 100, 250, 400, 500, 511]
+    hot_asks = [512, 520, 600, 750, 900, 1000, 1022, 1023]
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) 10,000 multi-symbol normal-seq steps
+    rng = random.Random(seed)
+    m = MultiSymOrderBookModel(symbols=2)
+    stim_lines: list[str] = []
+    exp_lines: list[str] = []
+    next_oid = [0, 0]
+    seq = 32000
+    for _ in range(n_norm):
+        sym = rng.randint(0, 1)
+        op, side, oid, level, qty, next_oid[sym] = _rand_cmd(
+            rng, m.books[sym], next_oid[sym], hot_bids, hot_asks
+        )
+        m.step_seq(sym, op, side, oid, level, qty, seq)
+        qsym = rng.randint(0, 1)
+        if m.books[qsym].orders and rng.random() < 0.8:
+            qry_oid = rng.choice(list(m.books[qsym].orders.keys()))
+        else:
+            qry_oid = rng.randint(0, m.books[qsym].max_orders - 1)
+        q_res = m.books[qsym].query(qry_oid)
+        b0 = m.books[0].best()
+        b1 = m.books[1].best()
+        c_res = m.counters()
+        stim_lines.append(
+            f"{sym} {op} {side} {oid} {level} {qty} {seq} {qsym} {qry_oid}\n"
+        )
+        exp_lines.append(
+            " ".join(
+                str(x)
+                for x in (
+                    *b0,
+                    *b1,
+                    *q_res,
+                    *c_res,
+                    int(m.stale),
+                    m.cnt_seq_gap,
+                    m.cnt_dup_seq,
+                    m.cnt_drop_stale,
+                )
+            )
+            + "\n"
+        )
+        seq = (seq + 1) & 0x7FFF
+
+    (out_dir / "stim_m2_norm.txt").write_text("".join(stim_lines), encoding="utf-8")
+    (out_dir / "exp_m2_norm.txt").write_text("".join(exp_lines), encoding="utf-8")
+
+    # 2) 2,000 multi-symbol steps with ~5% gap/dup + periodic empty snapshot recovery
+    rng = random.Random(seed + 1)
+    m = MultiSymOrderBookModel(symbols=2)
+    stim_lines = []
+    exp_lines = []
+    next_oid = [0, 0]
+    seq = 100
+    stale_run = 0
+    for _ in range(n_gap):
+        do_snap = 0
+        if m.stale and stale_run >= 15:
+            do_snap = 1
+            m.snapshot_empty()
+            stale_run = 0
+            seq = (seq + 10) & 0x7FFF
+
+        sym = rng.randint(0, 1)
+        op, side, oid, level, qty, next_oid[sym] = _rand_cmd(
+            rng, m.books[sym], next_oid[sym], hot_bids, hot_asks
+        )
+        p = rng.random()
+        if not m.stale and m.seq_init and p < 0.025:
+            cmd_seq = m.prev_seq
+        elif not m.stale and m.seq_init and p < 0.050:
+            cmd_seq = (m.prev_seq + rng.randint(2, 5)) & 0x7FFF
+            seq = (cmd_seq + 1) & 0x7FFF
+        else:
+            cmd_seq = seq
+            seq = (seq + 1) & 0x7FFF
+
+        was_stale = m.stale
+        m.step_seq(sym, op, side, oid, level, qty, cmd_seq)
+        if was_stale:
+            stale_run += 1
+
+        qsym = rng.randint(0, 1)
+        if m.books[qsym].orders and rng.random() < 0.8:
+            qry_oid = rng.choice(list(m.books[qsym].orders.keys()))
+        else:
+            qry_oid = rng.randint(0, m.books[qsym].max_orders - 1)
+        q_res = m.books[qsym].query(qry_oid)
+        b0 = m.books[0].best()
+        b1 = m.books[1].best()
+        c_res = m.counters()
+        stim_lines.append(
+            f"{do_snap} {sym} {op} {side} {oid} {level} {qty} {cmd_seq} {qsym} {qry_oid}\n"
+        )
+        exp_lines.append(
+            " ".join(
+                str(x)
+                for x in (
+                    *b0,
+                    *b1,
+                    *q_res,
+                    *c_res,
+                    int(m.stale),
+                    m.cnt_seq_gap,
+                    m.cnt_dup_seq,
+                    m.cnt_drop_stale,
+                )
+            )
+            + "\n"
+        )
+
+    (out_dir / "stim_m2_gap.txt").write_text("".join(stim_lines), encoding="utf-8")
+    (out_dir / "exp_m2_gap.txt").write_text("".join(exp_lines), encoding="utf-8")
+    print(
+        f"Generated {n_norm} M2 normal + {n_gap} M2 gap/dup steps "
+        f"(gaps={m.cnt_seq_gap}, dups={m.cnt_dup_seq}, stale_drops={m.cnt_drop_stale})"
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=10000)
@@ -495,6 +671,7 @@ def main() -> int:
     args = ap.parse_args()
     generate_random(args.n, args.seed, args.dir)
     generate_axis_random(args.n_axis, args.n_gap, args.seed + 100, args.dir)
+    generate_m2_random(args.n_axis, args.n_gap, args.seed + 200, args.dir)
     return 0
 
 

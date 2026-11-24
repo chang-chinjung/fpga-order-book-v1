@@ -3,7 +3,9 @@
 // Simple dual-port BRAM with 2-cycle read latency (built-in output register).
 // - Simulation: behavioral read-first RAM + output register stage.
 // - ECP5 Synthesis (`SYNTHESIS`): native DP16KD with REGMODE_B="OUTREG",
-//   cutting BRAM clk-to-q from 5.83 ns (NOREG) to ~1.1 ns for >=120 MHz timing.
+//   cutting BRAM clk-to-q from 5.83 ns (NOREG) to ~0.96 ns for >=130 MHz timing.
+// Supports DEPTH = 1024 (1Kx18), 2048 (2Kx9), 4096 (4Kx4), 8192 (8Kx2),
+// 16384 (16Kx1), and 32768 (2x 16Kx1).
 module bram_sdp #(
     parameter int DEPTH = 1024,
     parameter int WIDTH = 16,
@@ -13,13 +15,67 @@ module bram_sdp #(
     input  logic             we,
     input  logic [AW-1:0]    waddr,
     input  logic [WIDTH-1:0] wdata,
+    input  logic             re,
     input  logic [AW-1:0]    raddr,
     output logic [WIDTH-1:0] rdata
 );
 
 `ifdef SYNTHESIS
     generate
-        if (DEPTH == 8192) begin : g_8k
+        if (DEPTH == 16384) begin : g_16k
+            // 16Kx1: 1 DP16KD per bit
+            for (genvar i = 0; i < WIDTH; i++) begin : g_bit
+                wire q0;
+                DP16KD #(
+                    .DATA_WIDTH_A(1),
+                    .DATA_WIDTH_B(1),
+                    .REGMODE_A("NOREG"),
+                    .REGMODE_B("OUTREG"),
+                    .RESETMODE("SYNC"),
+                    .ASYNC_RESET_RELEASE("SYNC"),
+                    .CSDECODE_A("0b000"),
+                    .CSDECODE_B("0b000"),
+                    .CLKAMUX("CLKA"),
+                    .CLKBMUX("CLKB"),
+                    .GSR("AUTO")
+                ) u_dp (
+                    .CLKA(clk), .WEA(we),   .CEA(1'b1), .OCEA(1'b0), .RSTA(1'b0),
+                    .CSA0(1'b0), .CSA1(1'b0), .CSA2(1'b0),
+                    .ADA0(waddr[0]),  .ADA1(waddr[1]),  .ADA2(waddr[2]),  .ADA3(waddr[3]),
+                    .ADA4(waddr[4]),  .ADA5(waddr[5]),  .ADA6(waddr[6]),  .ADA7(waddr[7]),
+                    .ADA8(waddr[8]),  .ADA9(waddr[9]),  .ADA10(waddr[10]), .ADA11(waddr[11]),
+                    .ADA12(waddr[12]), .ADA13(waddr[13]),
+                    .DIA0(wdata[i]),
+                    .CLKB(clk), .WEB(1'b0), .CEB(re), .OCEB(re), .RSTB(1'b0),
+                    .CSB0(1'b0), .CSB1(1'b0), .CSB2(1'b0),
+                    .ADB0(raddr[0]),  .ADB1(raddr[1]),  .ADB2(raddr[2]),  .ADB3(raddr[3]),
+                    .ADB4(raddr[4]),  .ADB5(raddr[5]),  .ADB6(raddr[6]),  .ADB7(raddr[7]),
+                    .ADB8(raddr[8]),  .ADB9(raddr[9]),  .ADB10(raddr[10]), .ADB11(raddr[11]),
+                    .ADB12(raddr[12]), .ADB13(raddr[13]),
+                    .DOB0(q0)
+                );
+                assign rdata[i] = q0;
+            end
+        end else if (DEPTH == 32768) begin : g_32k
+            // 2 banks of 16Kx1
+            logic [WIDTH-1:0] rdata0, rdata1;
+            logic rbank_d1, rbank_d2;
+            always_ff @(posedge clk) begin
+                if (re) begin
+                    rbank_d1 <= raddr[14];
+                    rbank_d2 <= rbank_d1;
+                end
+            end
+            bram_sdp #(.DEPTH(16384), .WIDTH(WIDTH)) u_b0 (
+                .clk(clk), .we(we && !waddr[14]), .waddr(waddr[13:0]), .wdata(wdata),
+                .re(re), .raddr(raddr[13:0]), .rdata(rdata0)
+            );
+            bram_sdp #(.DEPTH(16384), .WIDTH(WIDTH)) u_b1 (
+                .clk(clk), .we(we &&  waddr[14]), .waddr(waddr[13:0]), .wdata(wdata),
+                .re(re), .raddr(raddr[13:0]), .rdata(rdata1)
+            );
+            assign rdata = rbank_d2 ? rdata1 : rdata0;
+        end else if (DEPTH == 8192) begin : g_8k
             localparam int NBLK = (WIDTH + 1) / 2;
             for (genvar i = 0; i < NBLK; i++) begin : g_blk
                 localparam int B0 = 2 * i;
@@ -50,7 +106,7 @@ module bram_sdp #(
                     .ADA10(waddr[9]), .ADA11(waddr[10]), .ADA12(waddr[11]),
                     .ADA13(waddr[12]),
                     .DIA0(d0), .DIA1(d1),
-                    .CLKB(clk), .WEB(1'b0), .CEB(1'b1), .OCEB(1'b1), .RSTB(1'b0),
+                    .CLKB(clk), .WEB(1'b0), .CEB(re), .OCEB(re), .RSTB(1'b0),
                     .CSB0(1'b0), .CSB1(1'b0), .CSB2(1'b0),
                     .ADB0(1'b0),
                     .ADB1(raddr[0]),  .ADB2(raddr[1]),  .ADB3(raddr[2]),
@@ -65,6 +121,98 @@ module bram_sdp #(
                 if (B1 < WIDTH) begin : g_b1
                     assign rdata[B1] = q1;
                 end
+            end
+        end else if (DEPTH == 4096) begin : g_4k
+            // 4Kx4: 4 bits per DP16KD
+            localparam int NBLK = (WIDTH + 3) / 4;
+            for (genvar i = 0; i < NBLK; i++) begin : g_blk
+                wire [3:0] di_b;
+                wire [3:0] do_b;
+                for (genvar k = 0; k < 4; k++) begin : g_di
+                    localparam int IDX = 4 * i + k;
+                    if (IDX < WIDTH) begin : g_in
+                        assign di_b[k] = wdata[IDX];
+                        assign rdata[IDX] = do_b[k];
+                    end else begin : g_pad
+                        assign di_b[k] = 1'b0;
+                    end
+                end
+                DP16KD #(
+                    .DATA_WIDTH_A(4),
+                    .DATA_WIDTH_B(4),
+                    .REGMODE_A("NOREG"),
+                    .REGMODE_B("OUTREG"),
+                    .RESETMODE("SYNC"),
+                    .ASYNC_RESET_RELEASE("SYNC"),
+                    .CSDECODE_A("0b000"),
+                    .CSDECODE_B("0b000"),
+                    .CLKAMUX("CLKA"),
+                    .CLKBMUX("CLKB"),
+                    .GSR("AUTO")
+                ) u_dp (
+                    .CLKA(clk), .WEA(we),   .CEA(1'b1), .OCEA(1'b0), .RSTA(1'b0),
+                    .CSA0(1'b0), .CSA1(1'b0), .CSA2(1'b0),
+                    .ADA0(1'b0), .ADA1(1'b0),
+                    .ADA2(waddr[0]),  .ADA3(waddr[1]),  .ADA4(waddr[2]),  .ADA5(waddr[3]),
+                    .ADA6(waddr[4]),  .ADA7(waddr[5]),  .ADA8(waddr[6]),  .ADA9(waddr[7]),
+                    .ADA10(waddr[8]), .ADA11(waddr[9]), .ADA12(waddr[10]), .ADA13(waddr[11]),
+                    .DIA0(di_b[0]), .DIA1(di_b[1]), .DIA2(di_b[2]), .DIA3(di_b[3]),
+                    .CLKB(clk), .WEB(1'b0), .CEB(re), .OCEB(re), .RSTB(1'b0),
+                    .CSB0(1'b0), .CSB1(1'b0), .CSB2(1'b0),
+                    .ADB0(1'b0), .ADB1(1'b0),
+                    .ADB2(raddr[0]),  .ADB3(raddr[1]),  .ADB4(raddr[2]),  .ADB5(raddr[3]),
+                    .ADB6(raddr[4]),  .ADB7(raddr[5]),  .ADB8(raddr[6]),  .ADB9(raddr[7]),
+                    .ADB10(raddr[8]), .ADB11(raddr[9]), .ADB12(raddr[10]), .ADB13(raddr[11]),
+                    .DOB0(do_b[0]), .DOB1(do_b[1]), .DOB2(do_b[2]), .DOB3(do_b[3])
+                );
+            end
+        end else if (DEPTH == 2048) begin : g_2k
+            // 2Kx9: 9 bits per DP16KD
+            localparam int NBLK = (WIDTH + 8) / 9;
+            for (genvar i = 0; i < NBLK; i++) begin : g_blk
+                wire [8:0] di_b;
+                wire [8:0] do_b;
+                for (genvar k = 0; k < 9; k++) begin : g_di
+                    localparam int IDX = 9 * i + k;
+                    if (IDX < WIDTH) begin : g_in
+                        assign di_b[k] = wdata[IDX];
+                        assign rdata[IDX] = do_b[k];
+                    end else begin : g_pad
+                        assign di_b[k] = 1'b0;
+                    end
+                end
+                DP16KD #(
+                    .DATA_WIDTH_A(9),
+                    .DATA_WIDTH_B(9),
+                    .REGMODE_A("NOREG"),
+                    .REGMODE_B("OUTREG"),
+                    .RESETMODE("SYNC"),
+                    .ASYNC_RESET_RELEASE("SYNC"),
+                    .CSDECODE_A("0b000"),
+                    .CSDECODE_B("0b000"),
+                    .CLKAMUX("CLKA"),
+                    .CLKBMUX("CLKB"),
+                    .GSR("AUTO")
+                ) u_dp (
+                    .CLKA(clk), .WEA(we),   .CEA(1'b1), .OCEA(1'b0), .RSTA(1'b0),
+                    .CSA0(1'b0), .CSA1(1'b0), .CSA2(1'b0),
+                    .ADA0(1'b0), .ADA1(1'b0), .ADA2(1'b0),
+                    .ADA3(waddr[0]),  .ADA4(waddr[1]),  .ADA5(waddr[2]),  .ADA6(waddr[3]),
+                    .ADA7(waddr[4]),  .ADA8(waddr[5]),  .ADA9(waddr[6]),  .ADA10(waddr[7]),
+                    .ADA11(waddr[8]), .ADA12(waddr[9]), .ADA13(waddr[10]),
+                    .DIA0(di_b[0]), .DIA1(di_b[1]), .DIA2(di_b[2]), .DIA3(di_b[3]),
+                    .DIA4(di_b[4]), .DIA5(di_b[5]), .DIA6(di_b[6]), .DIA7(di_b[7]),
+                    .DIA8(di_b[8]),
+                    .CLKB(clk), .WEB(1'b0), .CEB(re), .OCEB(re), .RSTB(1'b0),
+                    .CSB0(1'b0), .CSB1(1'b0), .CSB2(1'b0),
+                    .ADB0(1'b0), .ADB1(1'b0), .ADB2(1'b0),
+                    .ADB3(raddr[0]),  .ADB4(raddr[1]),  .ADB5(raddr[2]),  .ADB6(raddr[3]),
+                    .ADB7(raddr[4]),  .ADB8(raddr[5]),  .ADB9(raddr[6]),  .ADB10(raddr[7]),
+                    .ADB11(raddr[8]), .ADB12(raddr[9]), .ADB13(raddr[10]),
+                    .DOB0(do_b[0]), .DOB1(do_b[1]), .DOB2(do_b[2]), .DOB3(do_b[3]),
+                    .DOB4(do_b[4]), .DOB5(do_b[5]), .DOB6(do_b[6]), .DOB7(do_b[7]),
+                    .DOB8(do_b[8])
+                );
             end
         end else begin : g_1k
             // 1024-deep, WIDTH <= 18 fits in a single DP16KD (1Kx18)
@@ -96,7 +244,7 @@ module bram_sdp #(
                 .DIA9(di_pad[9]),   .DIA10(di_pad[10]), .DIA11(di_pad[11]),
                 .DIA12(di_pad[12]), .DIA13(di_pad[13]), .DIA14(di_pad[14]),
                 .DIA15(di_pad[15]), .DIA16(di_pad[16]), .DIA17(di_pad[17]),
-                .CLKB(clk), .WEB(1'b0), .CEB(1'b1), .OCEB(1'b1), .RSTB(1'b0),
+                .CLKB(clk), .WEB(1'b0), .CEB(re), .OCEB(re), .RSTB(1'b0),
                 .CSB0(1'b0), .CSB1(1'b0), .CSB2(1'b0),
                 .ADB0(1'b0), .ADB1(1'b0), .ADB2(1'b0), .ADB3(1'b0),
                 .ADB4(raddr[0]), .ADB5(raddr[1]), .ADB6(raddr[2]), .ADB7(raddr[3]),
@@ -118,8 +266,10 @@ module bram_sdp #(
     logic [WIDTH-1:0] rd_q;
 
     always_ff @(posedge clk) begin
-        rd_q  <= mem[raddr];
-        rdata <= rd_q;
+        if (re) begin
+            rd_q  <= mem[raddr];
+            rdata <= rd_q;
+        end
         if (we) mem[waddr] <= wdata;
     end
 `endif

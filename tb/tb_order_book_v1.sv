@@ -29,7 +29,7 @@ module tb_order_book_v1;
     logic             s_axis_cmd_tready_nc;
     logic [63:0]      s_axis_cmd_tdata_nc;
     logic             s_axis_best_tvalid_nc;
-    logic [53:0]      s_axis_best_tdata_nc;
+    logic [63:0]      s_axis_best_tdata_nc;
 
     logic             qry_valid;
     logic             qry_ready;
@@ -72,7 +72,8 @@ module tb_order_book_v1;
         .MAX_ORDERS(MAX_ORDERS),
         .QTY_W     (QTY_W),
         .OID_W     (OID_W),
-        .CNT_W     (CNT_W)
+        .CNT_W     (CNT_W),
+        .SYMBOLS   (1)
     ) dut (
         .clk             (clk),
         .rst_n           (rst_n),
@@ -83,6 +84,7 @@ module tb_order_book_v1;
         .cmd_oid         (cmd_oid),
         .cmd_level       (cmd_level),
         .cmd_qty         (cmd_qty),
+        .cmd_sym         (1'b0),
         .cmd_seq_en        (cmd_seq_en),
         .cmd_seq           (cmd_seq),
         .s_axis_cmd_tvalid (1'b0),
@@ -93,6 +95,7 @@ module tb_order_book_v1;
         .s_axis_best_tdata (s_axis_best_tdata_nc),
         .qry_valid         (qry_valid),
         .qry_ready       (qry_ready),
+        .qry_sym         (1'b0),
         .qry_oid         (qry_oid),
         .qry_found       (qry_found),
         .qry_level       (qry_level),
@@ -134,7 +137,7 @@ module tb_order_book_v1;
     logic [63:0]      ax_cmd_tdata;
     logic             ax_best_tvalid;
     logic             ax_best_tready;
-    logic [53:0]      ax_best_tdata;
+    logic [63:0]      ax_best_tdata;
     logic             ax_cmd_ready_nc;
     logic             ax_qry_valid;
     logic             ax_qry_ready;
@@ -162,7 +165,8 @@ module tb_order_book_v1;
         .QTY_W     (QTY_W),
         .OID_W     (OID_W),
         .CNT_W     (CNT_W),
-        .USE_AXIS  (1'b1)
+        .USE_AXIS  (1'b1),
+        .SYMBOLS   (1)
     ) dut_axis (
         .clk               (clk),
         .rst_n             (ax_rst_n),
@@ -173,6 +177,7 @@ module tb_order_book_v1;
         .cmd_oid           ('0),
         .cmd_level         ('0),
         .cmd_qty           ('0),
+        .cmd_sym           (1'b0),
         .cmd_seq_en        (1'b0),
         .cmd_seq           ('0),
         .s_axis_cmd_tvalid (ax_cmd_tvalid),
@@ -183,6 +188,7 @@ module tb_order_book_v1;
         .s_axis_best_tdata (ax_best_tdata),
         .qry_valid         (ax_qry_valid),
         .qry_ready         (ax_qry_ready),
+        .qry_sym           (1'b0),
         .qry_oid           (ax_qry_oid),
         .qry_found         (ax_qry_found),
         .qry_level         (ax_qry_level),
@@ -216,6 +222,103 @@ module tb_order_book_v1;
 
     wire _unused_ax = &{1'b0, ax_cmd_ready_nc, ax_cnt_drop_load};
 
+    // Third DUT instance: v1.2 SYMBOLS=2, USE_AXIS=1
+    localparam int M2_SYM = 2;
+    logic                           m2_rst_n;
+    logic                           m2_cmd_tvalid;
+    logic                           m2_cmd_tready;
+    logic [63:0]                    m2_cmd_tdata;
+    logic                           m2_best_tvalid;
+    logic                           m2_best_tready;
+    logic [63:0]                    m2_best_tdata;
+    logic                           m2_cmd_ready_nc;
+    logic                           m2_qry_valid;
+    logic                           m2_qry_ready;
+    logic                           m2_qry_sym;
+    logic [OID_W-1:0]               m2_qry_oid;
+    logic                           m2_qry_found;
+    logic [LW-1:0]                  m2_qry_level;
+    logic [QTY_W-1:0]               m2_qry_qty;
+    logic [5:0]                     m2_qry_pos;
+    logic [M2_SYM-1:0]              m2_bid_valid;
+    logic [M2_SYM-1:0][LW-1:0]      m2_best_bid;
+    logic [M2_SYM-1:0][QTY_W-1:0]   m2_best_bid_qty;
+    logic [M2_SYM-1:0]              m2_ask_valid;
+    logic [M2_SYM-1:0][LW-1:0]      m2_best_ask;
+    logic [M2_SYM-1:0][QTY_W-1:0]   m2_best_ask_qty;
+    logic [CNT_W-1:0] m2_cnt_add, m2_cnt_cancel, m2_cnt_reduce, m2_cnt_trade;
+    logic [CNT_W-1:0] m2_cnt_drop_dup, m2_cnt_drop_unknown, m2_cnt_drop_full, m2_cnt_drop_bad, m2_cnt_sat;
+    logic             m2_snap_valid, m2_snap_ready;
+    logic [63:0]      m2_snap_data;
+    logic             m2_stale, m2_snap_err;
+    logic [CNT_W-1:0] m2_cnt_seq_gap, m2_cnt_dup_seq, m2_cnt_drop_stale, m2_cnt_drop_load;
+
+    order_book_v1 #(
+        .LEVELS    (LEVELS),
+        .MAX_ORDERS(MAX_ORDERS),
+        .QTY_W     (QTY_W),
+        .OID_W     (OID_W),
+        .CNT_W     (CNT_W),
+        .USE_AXIS  (1'b1),
+        .SYMBOLS   (M2_SYM)
+    ) dut_m2 (
+        .clk               (clk),
+        .rst_n             (m2_rst_n),
+        .cmd_valid         (1'b0),
+        .cmd_ready         (m2_cmd_ready_nc),
+        .cmd_op            (2'd0),
+        .cmd_side          (1'b0),
+        .cmd_oid           ('0),
+        .cmd_level         ('0),
+        .cmd_qty           ('0),
+        .cmd_sym           (1'b0),
+        .cmd_seq_en        (1'b0),
+        .cmd_seq           ('0),
+        .s_axis_cmd_tvalid (m2_cmd_tvalid),
+        .s_axis_cmd_tready (m2_cmd_tready),
+        .s_axis_cmd_tdata  (m2_cmd_tdata),
+        .s_axis_best_tvalid(m2_best_tvalid),
+        .s_axis_best_tready(m2_best_tready),
+        .s_axis_best_tdata (m2_best_tdata),
+        .qry_valid         (m2_qry_valid),
+        .qry_ready         (m2_qry_ready),
+        .qry_sym           (m2_qry_sym),
+        .qry_oid           (m2_qry_oid),
+        .qry_found         (m2_qry_found),
+        .qry_level         (m2_qry_level),
+        .qry_qty           (m2_qry_qty),
+        .qry_pos           (m2_qry_pos),
+        .bid_valid         (m2_bid_valid),
+        .best_bid          (m2_best_bid),
+        .best_bid_qty      (m2_best_bid_qty),
+        .ask_valid         (m2_ask_valid),
+        .best_ask          (m2_best_ask),
+        .best_ask_qty      (m2_best_ask_qty),
+        .cnt_add           (m2_cnt_add),
+        .cnt_cancel        (m2_cnt_cancel),
+        .cnt_reduce        (m2_cnt_reduce),
+        .cnt_trade         (m2_cnt_trade),
+        .cnt_drop_dup      (m2_cnt_drop_dup),
+        .cnt_drop_unknown  (m2_cnt_drop_unknown),
+        .cnt_drop_full     (m2_cnt_drop_full),
+        .cnt_drop_bad      (m2_cnt_drop_bad),
+        .cnt_sat           (m2_cnt_sat),
+        .snapshot_valid    (m2_snap_valid),
+        .snapshot_ready    (m2_snap_ready),
+        .snapshot_data     (m2_snap_data),
+        .stale             (m2_stale),
+        .snapshot_error    (m2_snap_err),
+        .cnt_seq_gap       (m2_cnt_seq_gap),
+        .cnt_dup_seq       (m2_cnt_dup_seq),
+        .cnt_drop_stale    (m2_cnt_drop_stale),
+        .cnt_drop_load     (m2_cnt_drop_load)
+    );
+
+    wire _unused_m2 = &{1'b0, m2_cmd_ready_nc, m2_best_tdata, m2_ask_valid,
+                        m2_cnt_cancel, m2_cnt_reduce, m2_cnt_trade,
+                        m2_cnt_drop_dup, m2_cnt_drop_unknown, m2_cnt_drop_full,
+                        m2_cnt_drop_bad, m2_cnt_sat, m2_cnt_dup_seq, m2_cnt_drop_load};
+
     int errors = 0;
     int directed_passed = 0;
     int directed_total  = 0;
@@ -245,6 +348,15 @@ module tb_order_book_v1;
         ax_qry_oid           = '0;
         ax_snap_valid        = 1'b0;
         ax_snap_data         = '0;
+        m2_rst_n             = 1'b1;
+        m2_cmd_tvalid        = 1'b0;
+        m2_cmd_tdata         = '0;
+        m2_best_tready       = 1'b1;
+        m2_qry_valid         = 1'b0;
+        m2_qry_sym           = 1'b0;
+        m2_qry_oid           = '0;
+        m2_snap_valid        = 1'b0;
+        m2_snap_data         = '0;
         repeat (3) @(posedge clk);
         rst_n = 1'b1;
         while (!cmd_ready) @(posedge clk);
@@ -271,6 +383,7 @@ module tb_order_book_v1;
         cmd_valid  = 1'b0;
         @(posedge clk);
         while (!cmd_ready) @(posedge clk);
+        repeat (5) @(posedge clk);
     endtask
 
     task automatic send_cmd_seq(
@@ -294,6 +407,7 @@ module tb_order_book_v1;
         cmd_valid  = 1'b0;
         @(posedge clk);
         while (!cmd_ready) @(posedge clk);
+        repeat (5) @(posedge clk);
     endtask
 
     task automatic send_snap(input logic [63:0] rec);
@@ -403,8 +517,104 @@ module tb_order_book_v1;
         @(posedge clk);
     endtask
 
+    function automatic logic [63:0] mk_axis_cmd_sym(
+        input logic [1:0]       op,
+        input logic             side,
+        input logic [OID_W-1:0] oid,
+        input logic [LW-1:0]    lvl,
+        input logic [QTY_W-1:0] qty,
+        input logic [14:0]      seq,
+        input logic [1:0]       sym
+    );
+        return {2'd0, sym, seq, qty, lvl, oid, side, op};
+    endfunction
+
+    function automatic logic [63:0] mk_snap_level_m2(
+        input logic [1:0]       sym,
+        input logic             side,
+        input logic [LW-1:0]    lvl,
+        input logic [QTY_W-1:0] qty
+    );
+        return {2'd1, 17'd0, side, 16'd0, qty, lvl, sym};
+    endfunction
+
+    function automatic logic [63:0] mk_snap_order_m2(
+        input logic [1:0]       sym,
+        input logic             side,
+        input logic [LW-1:0]    lvl,
+        input logic [QTY_W-1:0] qty,
+        input logic [OID_W-1:0] oid
+    );
+        return {2'd2, 17'd0, side, oid, qty, lvl, sym};
+    endfunction
+
+    task automatic do_m2_reset();
+        m2_rst_n       = 1'b0;
+        m2_cmd_tvalid  = 1'b0;
+        m2_cmd_tdata   = '0;
+        m2_best_tready = 1'b1;
+        m2_qry_valid   = 1'b0;
+        m2_qry_sym     = 1'b0;
+        m2_qry_oid     = '0;
+        m2_snap_valid  = 1'b0;
+        m2_snap_data   = '0;
+        repeat (3) @(posedge clk);
+        m2_rst_n = 1'b1;
+        while (!m2_cmd_tready) @(posedge clk);
+        repeat (2) @(posedge clk);
+    endtask
+
+    task automatic send_m2_cmd(
+        input logic [1:0]       op,
+        input logic             side,
+        input logic [OID_W-1:0] oid,
+        input logic [LW-1:0]    lvl,
+        input logic [QTY_W-1:0] qty,
+        input logic [14:0]      seq,
+        input logic [1:0]       sym
+    );
+        m2_cmd_tvalid = 1'b1;
+        m2_cmd_tdata  = mk_axis_cmd_sym(op, side, oid, lvl, qty, seq, sym);
+        @(posedge clk);
+        while (!m2_cmd_tready) @(posedge clk);
+        m2_cmd_tvalid = 1'b0;
+        @(posedge clk);
+        while (!m2_cmd_tready) @(posedge clk);
+    endtask
+
+    task automatic send_m2_snap(input logic [63:0] rec);
+        m2_snap_valid = 1'b1;
+        m2_snap_data  = rec;
+        @(posedge clk);
+        while (!m2_snap_ready) @(posedge clk);
+        m2_snap_valid = 1'b0;
+        @(posedge clk);
+        while (!m2_snap_ready) @(posedge clk);
+    endtask
+
+    task automatic do_m2_query(
+        input  logic             sym,
+        input  logic [OID_W-1:0] oid,
+        output logic             found,
+        output logic [LW-1:0]    lvl,
+        output logic [QTY_W-1:0] qty,
+        output logic [5:0]       pos
+    );
+        m2_qry_valid = 1'b1;
+        m2_qry_sym   = sym;
+        m2_qry_oid   = oid;
+        @(posedge clk);
+        while (!m2_qry_ready) @(posedge clk);
+        found        = m2_qry_found;
+        lvl          = m2_qry_level;
+        qty          = m2_qry_qty;
+        pos          = m2_qry_pos;
+        m2_qry_valid = 1'b0;
+        @(posedge clk);
+    endtask
+
     task automatic wait_best_settle();
-        repeat (6) @(posedge clk);
+        repeat (14) @(posedge clk);
     endtask
 
     task automatic do_query(
@@ -856,8 +1066,8 @@ module tb_order_book_v1;
                 lat++;
             end
             if (lat > max_best_latency) max_best_latency = lat;
-            if (lat > 12) begin
-                $display("FAIL [D25 ADD latency]: %0d > 12", lat);
+            if (lat > 16) begin
+                $display("FAIL [D25 ADD latency]: %0d > 16", lat);
                 errors++;
             end
 
@@ -874,8 +1084,8 @@ module tb_order_book_v1;
                 lat++;
             end
             if (lat > max_best_latency) max_best_latency = lat;
-            if (lat > 12) begin
-                $display("FAIL [D25 CANCEL latency]: %0d > 12", lat);
+            if (lat > 16) begin
+                $display("FAIL [D25 CANCEL latency]: %0d > 16", lat);
                 errors++;
             end
         end
@@ -1080,15 +1290,17 @@ module tb_order_book_v1;
         // D35: v1.1 AXI4-Stream handshake (normal + stall) and s_axis_best backpressure
         e0 = errors;
         do_ax_reset();
+        #1;
         // Verify tready drops during command execution (stall) and accepts held tvalid on next ready
         ax_best_tready = 1'b0; // hold back best-price stream
         ax_cmd_tvalid  = 1'b1;
         ax_cmd_tdata   = mk_axis_cmd(OP_ADD, 1'b0, 16'd1, 10'd400, 16'd25, 16'd10);
         @(posedge clk); // accepted at this edge
+        #1;
         // Immediately present second command while busy (tready=0 -> must stall until ready)
         ax_cmd_tdata   = mk_axis_cmd(OP_ADD, 1'b1, 16'd2, 10'd410, 16'd35, 16'd11);
-        @(posedge clk);
         check_eq("D35 cmd tready stalled during exec", int'(ax_cmd_tready), 0);
+        @(posedge clk);
         while (!ax_cmd_tready) @(posedge clk);
         @(posedge clk); // accept second command with tvalid && tready
         ax_cmd_tvalid  = 1'b0;
@@ -1098,7 +1310,7 @@ module tb_order_book_v1;
         // Best stream must be asserting tvalid and holding tdata stable while tready=0
         check_eq("D35 best tvalid=1 under backpressure", int'(ax_best_tvalid), 1);
         begin
-            logic [53:0] held_best;
+            logic [63:0] held_best;
             held_best = ax_best_tdata;
             repeat (3) @(posedge clk);
             check_eq("D35 best tvalid still 1", int'(ax_best_tvalid), 1);
@@ -1203,8 +1415,240 @@ module tb_order_book_v1;
         @(posedge clk);
         finish_directed("D38_query_during_trade", e0);
 
+        // ------------------------------------------------------------------
+        // v1.2 Task A Directed Tests (D39..D46): Multi-symbol (SYMBOLS=2)
+        // ------------------------------------------------------------------
+        // D39: Two symbols active simultaneously; best bid/ask independent
+        e0 = errors;
+        do_m2_reset();
+        send_m2_cmd(OP_ADD, 1'b0, 16'd1, 10'd100, 16'd10, 15'd1, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b1, 16'd2, 10'd110, 16'd20, 15'd2, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd3, 10'd500, 16'd30, 15'd3, 2'd1);
+        send_m2_cmd(OP_ADD, 1'b1, 16'd4, 10'd520, 16'd40, 15'd4, 2'd1);
+        wait_best_settle();
+        check_eq("D39 sym0 bid_valid", int'(m2_bid_valid[0]), 1);
+        check_eq("D39 sym0 best_bid", int'(m2_best_bid[0]), 100);
+        check_eq("D39 sym0 best_bid_qty", int'(m2_best_bid_qty[0]), 10);
+        check_eq("D39 sym0 best_ask", int'(m2_best_ask[0]), 110);
+        check_eq("D39 sym0 best_ask_qty", int'(m2_best_ask_qty[0]), 20);
+        check_eq("D39 sym1 bid_valid", int'(m2_bid_valid[1]), 1);
+        check_eq("D39 sym1 best_bid", int'(m2_best_bid[1]), 500);
+        check_eq("D39 sym1 best_bid_qty", int'(m2_best_bid_qty[1]), 30);
+        check_eq("D39 sym1 best_ask", int'(m2_best_ask[1]), 520);
+        check_eq("D39 sym1 best_ask_qty", int'(m2_best_ask_qty[1]), 40);
+        finish_directed("D39_m2_dual_sym_best_isolated", e0);
+
+        // D40: Same OID (5) on sym 0 and sym 1 are completely independent
+        e0 = errors;
+        do_m2_reset();
+        send_m2_cmd(OP_ADD, 1'b0, 16'd5, 10'd200, 16'd15, 15'd1, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd5, 10'd300, 16'd25, 15'd2, 2'd1);
+        wait_best_settle();
+        do_m2_query(1'b0, 16'd5, qf, ql, qq, qp);
+        check_eq("D40 sym0 oid5 found", int'(qf), 1);
+        check_eq("D40 sym0 oid5 level", int'(ql), 200);
+        check_eq("D40 sym0 oid5 qty", int'(qq), 15);
+        do_m2_query(1'b1, 16'd5, qf, ql, qq, qp);
+        check_eq("D40 sym1 oid5 found", int'(qf), 1);
+        check_eq("D40 sym1 oid5 level", int'(ql), 300);
+        check_eq("D40 sym1 oid5 qty", int'(qq), 25);
+        check_eq("D40 cnt_add=2", int'(m2_cnt_add), 2);
+        finish_directed("D40_m2_same_oid_diff_sym", e0);
+
+        // D41: CANCEL only affects specified symbol
+        e0 = errors;
+        do_m2_reset();
+        send_m2_cmd(OP_ADD, 1'b0, 16'd7, 10'd150, 16'd12, 15'd1, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd7, 10'd150, 16'd34, 15'd2, 2'd1);
+        send_m2_cmd(OP_CANCEL, 1'b0, 16'd7, 10'd150, 16'd1, 15'd3, 2'd0);
+        wait_best_settle();
+        check_eq("D41 sym0 bid_valid=0", int'(m2_bid_valid[0]), 0);
+        check_eq("D41 sym1 bid_valid=1", int'(m2_bid_valid[1]), 1);
+        check_eq("D41 sym1 best_bid_qty=34", int'(m2_best_bid_qty[1]), 34);
+        do_m2_query(1'b0, 16'd7, qf, ql, qq, qp);
+        check_eq("D41 sym0 oid7 gone", int'(qf), 0);
+        do_m2_query(1'b1, 16'd7, qf, ql, qq, qp);
+        check_eq("D41 sym1 oid7 intact", int'(qf), 1);
+        check_eq("D41 sym1 oid7 qty=34", int'(qq), 34);
+        finish_directed("D41_m2_cancel_sym_isolated", e0);
+
+        // D42: TRADE only affects specified symbol
+        e0 = errors;
+        do_m2_reset();
+        send_m2_cmd(OP_ADD, 1'b0, 16'd10, 10'd250, 16'd20, 15'd1, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd10, 10'd250, 16'd20, 15'd2, 2'd1);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd11, 10'd250, 16'd30, 15'd3, 2'd1);
+        send_m2_cmd(OP_TRADE, 1'b0, 16'd0, 10'd250, 16'd25, 15'd4, 2'd1);
+        wait_best_settle();
+        check_eq("D42 sym0 bid_qty untouched", int'(m2_best_bid_qty[0]), 20);
+        check_eq("D42 sym1 bid_qty after trade", int'(m2_best_bid_qty[1]), 25);
+        do_m2_query(1'b0, 16'd10, qf, ql, qq, qp);
+        check_eq("D42 sym0 oid10 untouched", int'(qq), 20);
+        do_m2_query(1'b1, 16'd10, qf, ql, qq, qp);
+        check_eq("D42 sym1 oid10 consumed", int'(qf), 0);
+        do_m2_query(1'b1, 16'd11, qf, ql, qq, qp);
+        check_eq("D42 sym1 oid11 rem=25", int'(qq), 25);
+        check_eq("D42 sym1 oid11 pos=0", int'(qp), 0);
+        finish_directed("D42_m2_trade_sym_isolated", e0);
+
+        // D43: Multi-symbol snapshot loads both sym 0 and sym 1 with correct FIFO & qty
+        e0 = errors;
+        do_m2_reset();
+        send_m2_snap(mk_snap_header(32'd4));
+        send_m2_snap(mk_snap_level_m2(2'd0, 1'b0, 10'd100, 16'd30));
+        send_m2_snap(mk_snap_order_m2(2'd0, 1'b0, 10'd100, 16'd10, 16'd1));
+        send_m2_snap(mk_snap_order_m2(2'd0, 1'b0, 10'd100, 16'd20, 16'd2));
+        send_m2_snap(mk_snap_level_m2(2'd1, 1'b1, 10'd200, 16'd70));
+        send_m2_snap(mk_snap_order_m2(2'd1, 1'b1, 10'd200, 16'd30, 16'd1));
+        send_m2_snap(mk_snap_order_m2(2'd1, 1'b1, 10'd200, 16'd40, 16'd2));
+        send_m2_snap(mk_snap_footer(32'd4));
+        wait_best_settle();
+        check_eq("D43 snap_err=0", int'(m2_snap_err), 0);
+        check_eq("D43 sym0 best_bid=100", int'(m2_best_bid[0]), 100);
+        check_eq("D43 sym0 best_bid_qty=30", int'(m2_best_bid_qty[0]), 30);
+        check_eq("D43 sym1 best_ask=200", int'(m2_best_ask[1]), 200);
+        check_eq("D43 sym1 best_ask_qty=70", int'(m2_best_ask_qty[1]), 70);
+        do_m2_query(1'b0, 16'd2, qf, ql, qq, qp);
+        check_eq("D43 sym0 oid2 pos=1", int'(qp), 1);
+        do_m2_query(1'b1, 16'd2, qf, ql, qq, qp);
+        check_eq("D43 sym1 oid2 pos=1", int'(qp), 1);
+        finish_directed("D43_m2_snapshot_dual_sym", e0);
+
+        // D44: Multi-symbol snapshot count mismatch sets snapshot_error=1 and stale=1
+        e0 = errors;
+        do_m2_reset();
+        send_m2_snap(mk_snap_header(32'd3));
+        send_m2_snap(mk_snap_order_m2(2'd0, 1'b0, 10'd100, 16'd10, 16'd1));
+        send_m2_snap(mk_snap_order_m2(2'd1, 1'b0, 10'd100, 16'd10, 16'd1));
+        send_m2_snap(mk_snap_footer(32'd3)); // obs=2 != exp=3
+        wait_best_settle();
+        check_eq("D44 snap_err=1", int'(m2_snap_err), 1);
+        check_eq("D44 stale=1", int'(m2_stale), 1);
+        finish_directed("D44_m2_snapshot_count_mismatch", e0);
+
+        // D45: Global seq gap across multi-symbol stream locks both symbols
+        e0 = errors;
+        do_m2_reset();
+        send_m2_cmd(OP_ADD, 1'b0, 16'd1, 10'd100, 16'd10, 15'd50, 2'd0);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd1, 10'd200, 16'd20, 15'd51, 2'd1);
+        send_m2_cmd(OP_ADD, 1'b0, 16'd2, 10'd101, 16'd30, 15'd53, 2'd0); // GAP (exp 52)
+        send_m2_cmd(OP_ADD, 1'b0, 16'd2, 10'd201, 16'd40, 15'd54, 2'd1); // dropped stale
+        wait_best_settle();
+        check_eq("D45 cnt_seq_gap=1", int'(m2_cnt_seq_gap), 1);
+        check_eq("D45 cnt_drop_stale=1", int'(m2_cnt_drop_stale), 1);
+        check_eq("D45 stale=1", int'(m2_stale), 1);
+        check_eq("D45 sym0 best_bid=100", int'(m2_best_bid[0]), 100);
+        check_eq("D45 sym1 best_bid=200", int'(m2_best_bid[1]), 200);
+        finish_directed("D45_m2_global_seq_gap", e0);
+
+        // D46: AXI4-Stream sym field decode [61:60] and s_axis_best_tdata [63:61] sym tag
+        e0 = errors;
+        do_m2_reset();
+        m2_best_tready = 1'b0;
+        send_m2_cmd(OP_ADD, 1'b0, 16'd1, 10'd333, 16'd77, 15'd1, 2'd1);
+        wait_best_settle();
+        check_eq("D46 best_tvalid=1", int'(m2_best_tvalid), 1);
+        check_eq("D46 best_tdata[63:61]=sym1", int'(m2_best_tdata[63:61]), 1);
+        check_eq("D46 best_tdata[10:1]=333", int'(m2_best_tdata[10:1]), 333);
+        check_eq("D46 best_tdata[26:11]=77", int'(m2_best_tdata[26:11]), 77);
+        m2_best_tready = 1'b1;
+        @(posedge clk);
+        finish_directed("D46_m2_axis_sym_tag", e0);
+
+        // D47: v1.2 Task B acceptance rate: 100 consecutive distinct-OID ADDs <= 200 cycles
+        e0 = errors;
+        do_m2_reset();
+        begin
+            int cyc100, s100;
+            cyc100 = 0;
+            s100   = 0;
+            while (s100 < 100) begin
+                m2_cmd_tvalid = 1'b1;
+                m2_cmd_tdata  = mk_axis_cmd_sym(
+                    OP_ADD, 1'b0, OID_W'(s100), LW'((s100 * 7) % 1024),
+                    16'd10, 15'(s100 + 1), 2'(s100 & 1)
+                );
+                @(posedge clk);
+                cyc100++;
+                if (m2_cmd_tready) s100++;
+            end
+            m2_cmd_tvalid = 1'b0;
+            wait_best_settle();
+            check_eq("D47 100 ADDs cycles <= 200", int'(cyc100 <= 200), 1);
+            check_eq("D47 cnt_add=100", int'(m2_cnt_add), 100);
+        end
+        finish_directed("D47_m2_throughput_100_adds", e0);
+
+        // D48: v1.2 Task B RAW conflict stall (back-to-back same OID & same level)
+        e0 = errors;
+        do_m2_reset();
+        begin
+            int s48;
+            s48 = 0;
+            // Send 4 back-to-back ADDs:
+            //   #0: sym0 oid=10 lvl=300 qty=10 (valid)
+            //   #1: sym0 oid=10 lvl=300 qty=20 (same OID -> MUST stall RAW & drop dup!)
+            //   #2: sym0 oid=11 lvl=300 qty=30 (same level -> MUST stall RAW & append FIFO!)
+            //   #3: sym0 oid=12 lvl=300 qty=40 (same level -> MUST stall RAW & append FIFO!)
+            while (s48 < 4) begin
+                m2_cmd_tvalid = 1'b1;
+                case (s48)
+                    0: m2_cmd_tdata = mk_axis_cmd_sym(OP_ADD, 1'b0, 16'd10, 10'd300, 16'd10, 15'd1, 2'd0);
+                    1: m2_cmd_tdata = mk_axis_cmd_sym(OP_ADD, 1'b0, 16'd10, 10'd300, 16'd20, 15'd2, 2'd0);
+                    2: m2_cmd_tdata = mk_axis_cmd_sym(OP_ADD, 1'b0, 16'd11, 10'd300, 16'd30, 15'd3, 2'd0);
+                    default: m2_cmd_tdata = mk_axis_cmd_sym(OP_ADD, 1'b0, 16'd12, 10'd300, 16'd40, 15'd4, 2'd0);
+                endcase
+                @(posedge clk);
+                if (m2_cmd_tready) s48++;
+            end
+            m2_cmd_tvalid = 1'b0;
+            wait_best_settle();
+            check_eq("D48 cnt_add=3", int'(m2_cnt_add), 3);
+            check_eq("D48 cnt_drop_dup=1", int'(m2_cnt_drop_dup), 1);
+            check_eq("D48 sym0 best_bid=300", int'(m2_best_bid[0]), 300);
+            check_eq("D48 sym0 best_bid_qty=80", int'(m2_best_bid_qty[0]), 80);
+            do_m2_query(1'b0, 16'd10, qf, ql, qq, qp);
+            check_eq("D48 oid10 qty=10", int'(qq), 10);
+            check_eq("D48 oid10 pos=0", int'(qp), 0);
+            do_m2_query(1'b0, 16'd12, qf, ql, qq, qp);
+            check_eq("D48 oid12 pos=2", int'(qp), 2);
+        end
+        finish_directed("D48_m2_raw_conflict_stall", e0);
+
+        // Task B acceptance rate benchmark (10,000 ADDs, dispersed levels, interleaved sym)
+        begin
+            int cyc, sent;
+            do_m2_reset();
+            cyc = 0;
+            sent = 0;
+            while (sent < 10000) begin
+                m2_cmd_tvalid = 1'b1;
+                m2_cmd_tdata  = mk_axis_cmd_sym(
+                    OP_ADD,
+                    1'(sent[0]),
+                    OID_W'(sent % 8192),
+                    LW'((sent * 7) % 1024),
+                    16'd10,
+                    15'(sent & 15'h7FFF),
+                    2'(sent & 1)
+                );
+                @(posedge clk);
+                cyc++;
+                if (m2_cmd_tready) sent++;
+            end
+            m2_cmd_tvalid = 1'b0;
+            while (!m2_cmd_tready) begin @(posedge clk); cyc++; end
+            $display("THROUGHPUT_10K_ADD: %0d cycles for 10000 ADDs (%.3f cmd/cycle)",
+                     cyc, 10000.0 / real'(cyc));
+            if (cyc > 20000) begin
+                $display("FAILED: 10k ADD acceptance rate < 0.5 cmd/cycle (%0d cycles)", cyc);
+                errors++;
+            end
+        end
+
         $display("DIRECTED: %0d/%0d passed (max best-price latency = %0d cycles)",
                  directed_passed, directed_total, max_best_latency);
+        if ($test$plusargs("FAST_FAIL") && errors > 0) $fatal(1);
 
         // ------------------------------------------------------------------
         // Random Co-Simulation: 10,000 steps vs Python golden model
@@ -1441,6 +1885,179 @@ module tb_order_book_v1;
                      step, ax_gap_errors, ax_cnt_seq_gap, ax_cnt_dup_seq, ax_cnt_drop_stale);
             if (step < 2000) begin
                 $display("FAILED: expected >= 2000 AXIS gap/dup steps, got %0d", step);
+                errors++;
+            end
+        end
+
+        // ------------------------------------------------------------------
+        // Random Co-Simulation (v1.2): 10,000 multi-symbol (SYMBOLS=2) steps
+        // ------------------------------------------------------------------
+        begin
+            int fd_s, fd_e, step, rc_s, rc_e;
+            int s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid;
+            int e_bv0, e_bb0, e_bbq0, e_av0, e_ba0, e_baq0;
+            int e_bv1, e_bb1, e_bbq1, e_av1, e_ba1, e_baq1;
+            int e_qf, e_ql, e_qq, e_qp;
+            int e_ca, e_cc, e_cr, e_ct, e_cd, e_cu, e_cf, e_cb, e_cs;
+            int e_st, e_sg, e_sd, e_ss;
+            int m2_norm_errors = 0;
+
+            do_m2_reset();
+            fd_s = $fopen("build/stim_m2_norm.txt", "r");
+            fd_e = $fopen("build/exp_m2_norm.txt", "r");
+            if (fd_s == 0 || fd_e == 0) begin
+                $display("FAILED: could not open build/stim_m2_norm.txt or exp_m2_norm.txt");
+                $fatal(1);
+            end
+
+            step = 0;
+            while (!$feof(fd_s) && !$feof(fd_e)) begin
+                rc_s = $fscanf(fd_s, "%d %d %d %d %d %d %d %d %d\n",
+                               s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid);
+                rc_e = $fscanf(fd_e, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+                               e_bv0, e_bb0, e_bbq0, e_av0, e_ba0, e_baq0,
+                               e_bv1, e_bb1, e_bbq1, e_av1, e_ba1, e_baq1,
+                               e_qf, e_ql, e_qq, e_qp,
+                               e_ca, e_cc, e_cr, e_ct, e_cd, e_cu, e_cf, e_cb, e_cs,
+                               e_st, e_sg, e_sd, e_ss);
+                if (rc_s != 9 || rc_e != 29) break;
+
+                send_m2_cmd(2'(s_op), 1'(s_side), OID_W'(s_oid), LW'(s_lvl), QTY_W'(s_qty), 15'(s_seq), 2'(s_sym));
+                do_m2_query(1'(s_qsym), OID_W'(s_qoid), qf, ql, qq, qp);
+                wait_best_settle();
+
+                if (int'(m2_bid_valid[0])     !== e_bv0  ||
+                    int'(m2_best_bid[0])      !== e_bb0  ||
+                    int'(m2_best_bid_qty[0])  !== e_bbq0 ||
+                    int'(m2_ask_valid[0])     !== e_av0  ||
+                    int'(m2_best_ask[0])      !== e_ba0  ||
+                    int'(m2_best_ask_qty[0])  !== e_baq0 ||
+                    int'(m2_bid_valid[1])     !== e_bv1  ||
+                    int'(m2_best_bid[1])      !== e_bb1  ||
+                    int'(m2_best_bid_qty[1])  !== e_bbq1 ||
+                    int'(m2_ask_valid[1])     !== e_av1  ||
+                    int'(m2_best_ask[1])      !== e_ba1  ||
+                    int'(m2_best_ask_qty[1])  !== e_baq1 ||
+                    int'(qf)                  !== e_qf   ||
+                    int'(ql)                  !== e_ql   ||
+                    int'(qq)                  !== e_qq   ||
+                    int'(qp)                  !== e_qp   ||
+                    int'(m2_cnt_add)          !== e_ca   ||
+                    int'(m2_cnt_cancel)       !== e_cc   ||
+                    int'(m2_cnt_reduce)       !== e_cr   ||
+                    int'(m2_cnt_trade)        !== e_ct   ||
+                    int'(m2_cnt_drop_dup)     !== e_cd   ||
+                    int'(m2_cnt_drop_unknown) !== e_cu   ||
+                    int'(m2_cnt_drop_full)    !== e_cf   ||
+                    int'(m2_cnt_drop_bad)     !== e_cb   ||
+                    int'(m2_cnt_sat)          !== e_cs   ||
+                    int'(m2_stale)            !== e_st   ||
+                    int'(m2_cnt_seq_gap)      !== e_sg   ||
+                    int'(m2_cnt_dup_seq)      !== e_sd   ||
+                    int'(m2_cnt_drop_stale)   !== e_ss) begin
+                    if (m2_norm_errors < 10) begin
+                        $display("M2 NORM MISMATCH step=%0d sym=%0d op=%0d side=%0d oid=%0d lvl=%0d qty=%0d seq=%0d qsym=%0d qoid=%0d",
+                                 step, s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid);
+                    end
+                    m2_norm_errors++;
+                    errors++;
+                end
+                step++;
+            end
+            $fclose(fd_s);
+            $fclose(fd_e);
+            $display("RANDOM_M2_NORM: %0d steps, %0d mismatches", step, m2_norm_errors);
+            if (step < 10000) begin
+                $display("FAILED: expected >= 10000 M2 normal steps, got %0d", step);
+                errors++;
+            end
+        end
+
+        // ------------------------------------------------------------------
+        // Random Co-Simulation (v1.2): 2,000 multi-symbol steps with 5% gap/dup
+        // ------------------------------------------------------------------
+        begin
+            int fd_s, fd_e, step, rc_s, rc_e;
+            int s_snap, s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid;
+            int e_bv0, e_bb0, e_bbq0, e_av0, e_ba0, e_baq0;
+            int e_bv1, e_bb1, e_bbq1, e_av1, e_ba1, e_baq1;
+            int e_qf, e_ql, e_qq, e_qp;
+            int e_ca, e_cc, e_cr, e_ct, e_cd, e_cu, e_cf, e_cb, e_cs;
+            int e_st, e_sg, e_sd, e_ss;
+            int m2_gap_errors = 0;
+
+            do_m2_reset();
+            fd_s = $fopen("build/stim_m2_gap.txt", "r");
+            fd_e = $fopen("build/exp_m2_gap.txt", "r");
+            if (fd_s == 0 || fd_e == 0) begin
+                $display("FAILED: could not open build/stim_m2_gap.txt or exp_m2_gap.txt");
+                $fatal(1);
+            end
+
+            step = 0;
+            while (!$feof(fd_s) && !$feof(fd_e)) begin
+                rc_s = $fscanf(fd_s, "%d %d %d %d %d %d %d %d %d %d\n",
+                               s_snap, s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid);
+                rc_e = $fscanf(fd_e, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+                               e_bv0, e_bb0, e_bbq0, e_av0, e_ba0, e_baq0,
+                               e_bv1, e_bb1, e_bbq1, e_av1, e_ba1, e_baq1,
+                               e_qf, e_ql, e_qq, e_qp,
+                               e_ca, e_cc, e_cr, e_ct, e_cd, e_cu, e_cf, e_cb, e_cs,
+                               e_st, e_sg, e_sd, e_ss);
+                if (rc_s != 10 || rc_e != 29) break;
+
+                if (s_snap != 0) begin
+                    send_m2_snap(mk_snap_header(32'd0));
+                    send_m2_snap(mk_snap_footer(32'd0));
+                end
+                send_m2_cmd(2'(s_op), 1'(s_side), OID_W'(s_oid), LW'(s_lvl), QTY_W'(s_qty), 15'(s_seq), 2'(s_sym));
+                do_m2_query(1'(s_qsym), OID_W'(s_qoid), qf, ql, qq, qp);
+                wait_best_settle();
+
+                if (int'(m2_bid_valid[0])     !== e_bv0  ||
+                    int'(m2_best_bid[0])      !== e_bb0  ||
+                    int'(m2_best_bid_qty[0])  !== e_bbq0 ||
+                    int'(m2_ask_valid[0])     !== e_av0  ||
+                    int'(m2_best_ask[0])      !== e_ba0  ||
+                    int'(m2_best_ask_qty[0])  !== e_baq0 ||
+                    int'(m2_bid_valid[1])     !== e_bv1  ||
+                    int'(m2_best_bid[1])      !== e_bb1  ||
+                    int'(m2_best_bid_qty[1])  !== e_bbq1 ||
+                    int'(m2_ask_valid[1])     !== e_av1  ||
+                    int'(m2_best_ask[1])      !== e_ba1  ||
+                    int'(m2_best_ask_qty[1])  !== e_baq1 ||
+                    int'(qf)                  !== e_qf   ||
+                    int'(ql)                  !== e_ql   ||
+                    int'(qq)                  !== e_qq   ||
+                    int'(qp)                  !== e_qp   ||
+                    int'(m2_cnt_add)          !== e_ca   ||
+                    int'(m2_cnt_cancel)       !== e_cc   ||
+                    int'(m2_cnt_reduce)       !== e_cr   ||
+                    int'(m2_cnt_trade)        !== e_ct   ||
+                    int'(m2_cnt_drop_dup)     !== e_cd   ||
+                    int'(m2_cnt_drop_unknown) !== e_cu   ||
+                    int'(m2_cnt_drop_full)    !== e_cf   ||
+                    int'(m2_cnt_drop_bad)     !== e_cb   ||
+                    int'(m2_cnt_sat)          !== e_cs   ||
+                    int'(m2_stale)            !== e_st   ||
+                    int'(m2_cnt_seq_gap)      !== e_sg   ||
+                    int'(m2_cnt_dup_seq)      !== e_sd   ||
+                    int'(m2_cnt_drop_stale)   !== e_ss) begin
+                    if (m2_gap_errors < 10) begin
+                        $display("M2 GAP MISMATCH step=%0d sym=%0d op=%0d side=%0d oid=%0d lvl=%0d qty=%0d seq=%0d qsym=%0d qoid=%0d",
+                                 step, s_sym, s_op, s_side, s_oid, s_lvl, s_qty, s_seq, s_qsym, s_qoid);
+                    end
+                    m2_gap_errors++;
+                    errors++;
+                end
+                step++;
+            end
+            $fclose(fd_s);
+            $fclose(fd_e);
+            $display("RANDOM_M2_GAP: %0d steps, %0d mismatches (gaps=%0d, dups=%0d, stale_drops=%0d)",
+                     step, m2_gap_errors, m2_cnt_seq_gap, m2_cnt_dup_seq, m2_cnt_drop_stale);
+            if (step < 2000) begin
+                $display("FAILED: expected >= 2000 M2 gap/dup steps, got %0d", step);
                 errors++;
             end
         end

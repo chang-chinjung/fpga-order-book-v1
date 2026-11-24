@@ -10,7 +10,7 @@ SYNTH_RTL := $(RTL) rtl/order_book_v1_top.sv
 SRC       := $(RTL) tb/tb_order_book_v1.sv
 SYNTH_TOP := order_book_v1_top
 JSON      := build/order_book_v1_ecp5.json
-FREQ_MHZ  ?= 120
+FREQ_MHZ  ?= 130
 SEED      ?= 42
 RAND_N    ?= 10000
 

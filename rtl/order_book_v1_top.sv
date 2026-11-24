@@ -1,14 +1,16 @@
 `timescale 1ns / 1ps
 
-// Thin ECP5 synthesis top for order_book_v1 (USE_AXIS=1).
-// Keeps 100% of RTL logic, BRAMs, and all 13 counters alive within the
-// LFE5U-85F-CABGA756 365-pin user I/O budget (263 pins total).
+// Thin ECP5 synthesis top for order_book_v1 (SYMBOLS=2, USE_AXIS=1).
+// Keeps 100% of RTL logic, BRAMs (76 DP16KD <= 80), and all 13 counters alive
+// within the LFE5U-85F-CABGA756 365-pin user I/O budget (274 pins total).
 module order_book_v1_top #(
     parameter int LEVELS     = 1024,
     parameter int MAX_ORDERS = 8192,
     parameter int QTY_W      = 16,
     parameter int OID_W      = 16,
     parameter int CNT_W      = 16,
+    parameter int SYMBOLS    = 2,
+    parameter int SW         = (SYMBOLS <= 1) ? 1 : $clog2(SYMBOLS),
     parameter int LW         = (LEVELS <= 2) ? 1 : $clog2(LEVELS)
 ) (
     input  logic             clk,
@@ -19,10 +21,10 @@ module order_book_v1_top #(
     output logic             s_axis_cmd_tready,
     input  logic [63:0]      s_axis_cmd_tdata,
 
-    // AXI4-Stream best-price master
+    // AXI4-Stream best-price master ([63:61]=sym, [53:0]=best)
     output logic             s_axis_best_tvalid,
     input  logic             s_axis_best_tready,
-    output logic [53:0]      s_axis_best_tdata,
+    output logic [63:0]      s_axis_best_tdata,
 
     // Snapshot slave
     input  logic             snapshot_valid,
@@ -32,6 +34,7 @@ module order_book_v1_top #(
     // Query interface
     input  logic             qry_valid,
     output logic             qry_ready,
+    input  logic [SW-1:0]    qry_sym,
     input  logic [OID_W-1:0] qry_oid,
     output logic             qry_found,
     output logic [LW-1:0]    qry_level,
@@ -45,10 +48,10 @@ module order_book_v1_top #(
     output logic [CNT_W-1:0] cnt_val
 );
 
-    logic             cmd_ready_nc;
-    logic             bid_valid_nc, ask_valid_nc;
-    logic [LW-1:0]    best_bid_nc, best_ask_nc;
-    logic [QTY_W-1:0] best_bid_qty_nc, best_ask_qty_nc;
+    logic                        cmd_ready_nc;
+    logic [SYMBOLS-1:0]          bid_valid_nc, ask_valid_nc;
+    logic [SYMBOLS-1:0][LW-1:0]  best_bid_nc, best_ask_nc;
+    logic [SYMBOLS-1:0][QTY_W-1:0] best_bid_qty_nc, best_ask_qty_nc;
 
     logic [CNT_W-1:0] cnt_add, cnt_cancel, cnt_reduce, cnt_trade;
     logic [CNT_W-1:0] cnt_drop_dup, cnt_drop_unknown, cnt_drop_full, cnt_drop_bad, cnt_sat;
@@ -63,7 +66,8 @@ module order_book_v1_top #(
         .QTY_W     (QTY_W),
         .OID_W     (OID_W),
         .CNT_W     (CNT_W),
-        .USE_AXIS  (1'b1)
+        .USE_AXIS  (1'b1),
+        .SYMBOLS   (SYMBOLS)
     ) u_core (
         .clk               (clk),
         .rst_n             (rst_n),
@@ -74,6 +78,7 @@ module order_book_v1_top #(
         .cmd_oid           ('0),
         .cmd_level         ('0),
         .cmd_qty           ('0),
+        .cmd_sym           ('0),
         .cmd_seq_en        (1'b0),
         .cmd_seq           ('0),
         .s_axis_cmd_tvalid (s_axis_cmd_tvalid),
@@ -84,6 +89,7 @@ module order_book_v1_top #(
         .s_axis_best_tdata (s_axis_best_tdata),
         .qry_valid         (qry_valid),
         .qry_ready         (qry_ready),
+        .qry_sym           (qry_sym),
         .qry_oid           (qry_oid),
         .qry_found         (qry_found),
         .qry_level         (qry_level),

@@ -88,7 +88,23 @@ module bitmap_best #(
     endfunction
     /* verilator lint_on UNUSEDSIGNAL */
 
-    // ---------------- Cycle T+1: 16 groups of 4 words (registered) ----------------
+    // ---------------- Cycle T+1: per-word 16-bit reduction (registered for >=130 MHz) ----------------
+    logic [W-1:0]  w_any_r;
+    logic [GW-1:0] w_bit_r [W];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            w_any_r <= '0;
+            for (int w = 0; w < W; w++) w_bit_r[w] <= '0;
+        end else begin
+            for (int w = 0; w < W; w++) begin
+                w_any_r[w] <= |words[w];
+                w_bit_r[w] <= FIND_HI ? hi16(words[w]) : lo16(words[w]);
+            end
+        end
+    end
+
+    // ---------------- Cycle T+2: 16 groups of 4 words (registered) ----------------
     logic [NG-1:0] g_any_r;
     logic [1:0]    g_sel_r [NG];
     logic [GW-1:0] g_bit_r [NG];
@@ -102,51 +118,60 @@ module bitmap_best #(
             end
         end else begin
             for (int g = 0; g < NG; g++) begin
-                logic [3:0]    s;
-                logic [1:0]    sel;
-                logic [GW-1:0] wb [4];
+                logic [3:0] s;
+                logic [1:0] sel;
 
-                for (int k = 0; k < 4; k++) begin
-                    s[k]  = |words[g*4 + k];
-                    wb[k] = FIND_HI ? hi16(words[g*4 + k]) : lo16(words[g*4 + k]);
-                end
+                s   = w_any_r[g*4 +: 4];
                 sel = FIND_HI ? hi2(s) : lo2(s);
 
                 g_any_r[g] <= |s;
                 g_sel_r[g] <= sel;
-                g_bit_r[g] <= wb[sel];
+                case (sel)
+                    2'd0:    g_bit_r[g] <= w_bit_r[g*4 + 0];
+                    2'd1:    g_bit_r[g] <= w_bit_r[g*4 + 1];
+                    2'd2:    g_bit_r[g] <= w_bit_r[g*4 + 2];
+                    default: g_bit_r[g] <= w_bit_r[g*4 + 3];
+                endcase
             end
         end
     end
 
-    // ---------------- Cycle T+2: 2-level 4x4 parallel tree ----------------
-    // Splitting the 16-group reduction into 4 parallel quadrants of 4 groups cuts
-    // the combinational path from (hi16 + 16:1 mux) to (hi2 + 4:1 mux + 4:1 mux).
-    logic [3:0] q_any;
-    logic [1:0] q_grp_lo [4];
-    logic [1:0] q_sel    [4];
-    logic [GW-1:0] q_bit [4];
+    // ---------------- Cycle T+2: 4 parallel quadrants (registered for >=130 MHz) ----------------
+    logic [3:0]    q_any_r;
+    logic [1:0]    q_grp_lo_r [4];
+    logic [1:0]    q_sel_r    [4];
+    logic [GW-1:0] q_bit_r    [4];
 
-    always_comb begin
-        for (int q = 0; q < 4; q++) begin
-            logic [3:0] qv;
-            logic [1:0] qs;
-            qv = g_any_r[q*4 +: 4];
-            qs = FIND_HI ? hi2(qv) : lo2(qv);
-            q_any[q]    = |qv;
-            q_grp_lo[q] = qs;
-            case (qs)
-                2'd0: begin q_sel[q] = g_sel_r[q*4 + 0]; q_bit[q] = g_bit_r[q*4 + 0]; end
-                2'd1: begin q_sel[q] = g_sel_r[q*4 + 1]; q_bit[q] = g_bit_r[q*4 + 1]; end
-                2'd2: begin q_sel[q] = g_sel_r[q*4 + 2]; q_bit[q] = g_bit_r[q*4 + 2]; end
-                default: begin q_sel[q] = g_sel_r[q*4 + 3]; q_bit[q] = g_bit_r[q*4 + 3]; end
-            endcase
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            q_any_r <= '0;
+            for (int q = 0; q < 4; q++) begin
+                q_grp_lo_r[q] <= 2'd0;
+                q_sel_r[q]    <= 2'd0;
+                q_bit_r[q]    <= '0;
+            end
+        end else begin
+            for (int q = 0; q < 4; q++) begin
+                logic [3:0] qv;
+                logic [1:0] qs;
+                qv = g_any_r[q*4 +: 4];
+                qs = FIND_HI ? hi2(qv) : lo2(qv);
+                q_any_r[q]    <= |qv;
+                q_grp_lo_r[q] <= qs;
+                case (qs)
+                    2'd0: begin q_sel_r[q] <= g_sel_r[q*4 + 0]; q_bit_r[q] <= g_bit_r[q*4 + 0]; end
+                    2'd1: begin q_sel_r[q] <= g_sel_r[q*4 + 1]; q_bit_r[q] <= g_bit_r[q*4 + 1]; end
+                    2'd2: begin q_sel_r[q] <= g_sel_r[q*4 + 2]; q_bit_r[q] <= g_bit_r[q*4 + 2]; end
+                    default: begin q_sel_r[q] <= g_sel_r[q*4 + 3]; q_bit_r[q] <= g_bit_r[q*4 + 3]; end
+                endcase
+            end
         end
     end
 
-    wire [1:0]    best_q   = FIND_HI ? hi2(q_any) : lo2(q_any);
-    wire          best_val = |q_any;
-    wire [LW-1:0] best_idx = {best_q, q_grp_lo[best_q], q_sel[best_q], q_bit[best_q]};
+    // ---------------- Cycle T+3: Final 4:1 quadrant selection ----------------
+    wire [1:0]    best_q   = FIND_HI ? hi2(q_any_r) : lo2(q_any_r);
+    wire          best_val = |q_any_r;
+    wire [LW-1:0] best_idx = {best_q, q_grp_lo_r[best_q], q_sel_r[best_q], q_bit_r[best_q]};
 
     assign hi_valid = FIND_HI ? best_val : 1'b0;
     assign lo_valid = FIND_HI ? 1'b0     : best_val;
